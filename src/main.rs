@@ -27,32 +27,45 @@ impl Label {
 
 #[derive(Debug, Copy, Clone)]
 struct DnsHeader {
-    /// Packet Identifier (ID)	16 bits	A random ID assigned to query packets. Response packets must reply with the same ID.
+    ///Packet Identifier (ID)
+    ///16 bits	A random ID assigned to query packets. Response packets must reply with the same ID.
     id: u16,
-    /// Query/Response Indicator (QR)	1 bit	1 for a reply packet, 0 for a question packet.
+    ///Query/Response Indicator (QR)
+    ///1 bit	1 for a reply packet, 0 for a question packet.
     qr: u8,
-    ///Operation Code (OPCODE)	4 bits	Specifies the kind of query in a message.
-    opcode: u8,
-    ///Authoritative Answer (AA)	1 bit	1 if the responding server "owns" the domain queried, i.e., it's authoritative.
-    aa: u8,
-    ///Truncation (TC)	1 bit	1 if the message is larger than 512 bytes. Always 0 in UDP responses.
-    tc: u8,
-    ///Recursion Desired (RD)	1 bit	Sender sets this to 1 if the server should recursively resolve this query, 0 otherwise.
-    rd: u8,
-    ///Recursion Available (RA)	1 bit	Server sets this to 1 to indicate that recursion is available.
-    ra: u8,
-    ///Reserved (Z)	3 bits	Used by DNSSEC queries. At inception, it was reserved for future use.
-    z: u8,
-    ///Response Code (RCODE)	4 bits	Response code indicating the status of the response.
-    rcode: u8,
-    ///Question Count (QDCOUNT)	16 bits	Number of questions in the Question section.
-    qdcount: u16,
-    ///Answer Record Count (ANCOUNT)	16 bits	Number of records in the Answer section.
-    ancount: u16,
-    ///Authority Record Count (NSCOUNT)	16 bits	Number of records in the Authority section.
-    nscount: u16,
-    ///Additional Record Count (ARCOUNT)	16 bits	Number of records in the Additional section.
-    arcount: u16,
+    ///Operation Code (OPCODE)
+    ///4 bits	Specifies the kind of query in a message.
+    op_code: u8,
+    ///Authoritative Answer (AA)
+    ///1 bit	1 if the responding server "owns" the domain queried, i.e., it's authoritative.
+    authorative_answer: u8,
+    ///Truncation (TC)
+    ///1 bit	1 if the message is larger than 512 bytes. Always 0 in UDP responses.
+    truncation: u8,
+    ///Recursion Desired (RD)
+    ///1 bit	Sender sets this to 1 if the server should recursively resolve this query, 0 otherwise.
+    recursion_desired: u8,
+    ///Recursion Available (RA)
+    ///1 bit	Server sets this to 1 to indicate that recursion is available.
+    recursion_available: u8,
+    ///Reserved (Z)	
+    ///3 bits	Used by DNSSEC queries. At inception, it was reserved for future use.
+    reserved: u8,
+    ///Response Code (RCODE)	
+    ///4 bits	Response code indicating the status of the response.
+    response_code: u8,
+    ///Question Count (QDCOUNT)	
+    ///16 bits	Number of questions in the Question section.
+    question_count: u16,
+    ///Answer Record Count (ANCOUNT)	
+    ///16 bits	Number of records in the Answer section.
+    answer_count: u16,
+    ///Authority Record Count (NSCOUNT)	
+    ///16 bits	Number of records in the Authority section.
+    authority_code: u16,
+    ///Additional Record Count (ARCOUNT)	
+    ///16 bits	Number of records in the Additional section.
+    additional_count: u16,
 }
 
 impl DnsHeader {
@@ -62,21 +75,25 @@ impl DnsHeader {
         header[0] = self.id.to_be_bytes()[0];
         header[1] = self.id.to_be_bytes()[1];
 
-        header[2] = (self.qr << 7) | (self.opcode << 3) | (self.aa << 2) | (self.tc << 1) | self.rd;
+        header[2] = (self.qr << 7)
+            | (self.op_code << 3)
+            | (self.authorative_answer << 2)
+            | (self.truncation << 1)
+            | self.recursion_desired;
 
-        header[3] = (self.ra << 7) | (self.z << 4) | self.rcode;
+        header[3] = (self.recursion_available << 7) | (self.reserved << 4) | self.response_code;
 
-        header[4] = self.qdcount.to_be_bytes()[0];
-        header[5] = self.qdcount.to_be_bytes()[1];
+        header[4] = self.question_count.to_be_bytes()[0];
+        header[5] = self.question_count.to_be_bytes()[1];
 
-        header[6] = self.ancount.to_be_bytes()[0];
-        header[7] = self.ancount.to_be_bytes()[1];
+        header[6] = self.answer_count.to_be_bytes()[0];
+        header[7] = self.answer_count.to_be_bytes()[1];
 
-        header[8] = self.nscount.to_be_bytes()[0];
-        header[9] = self.nscount.to_be_bytes()[1];
+        header[8] = self.authority_code.to_be_bytes()[0];
+        header[9] = self.authority_code.to_be_bytes()[1];
 
-        header[10] = self.arcount.to_be_bytes()[0];
-        header[11] = self.arcount.to_be_bytes()[1];
+        header[10] = self.additional_count.to_be_bytes()[0];
+        header[11] = self.additional_count.to_be_bytes()[1];
 
         return header;
     }
@@ -95,7 +112,7 @@ struct DnsQuestion {
 impl DnsQuestion {
     fn get_question(self) -> Vec<u8> {
         let mut question = vec![];
-        self.name.clone_into(&mut question);
+        question.extend(self.name);
         question.push(self.record_type.to_be_bytes()[0]);
         question.push(self.record_type.to_be_bytes()[1]);
 
@@ -166,17 +183,17 @@ fn main() {
                 let header = DnsHeader {
                     id: 1234,
                     qr: 1,
-                    opcode: 0,
-                    aa: 0,
-                    tc: 0,
-                    rd: 0,
-                    ra: 0,
-                    z: 0,
-                    rcode: 0,
-                    qdcount: 1,
-                    ancount: 1,
-                    nscount: 0,
-                    arcount: 0,
+                    op_code: 0,
+                    authorative_answer: 0,
+                    truncation: 0,
+                    recursion_desired: 0,
+                    recursion_available: 0,
+                    reserved: 0,
+                    response_code: 0,
+                    question_count: 1,
+                    answer_count: 1,
+                    authority_code: 0,
+                    additional_count: 0,
                 };
                 let mut packet: Vec<u8> = vec![];
                 packet.extend_from_slice(&header.get_header());
@@ -210,3 +227,4 @@ fn main() {
         }
     }
 }
+
