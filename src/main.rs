@@ -1,6 +1,30 @@
 // Uncomment this block to pass the first stage
 use std::net::UdpSocket;
 
+#[derive(Debug, Clone)]
+struct Label {
+    encoded_label: Vec<u8>,
+}
+
+impl Label {
+    fn new(name: String) -> Self {
+        let splitted: Vec<&str> = name.split(".").collect();
+        let mut full_label: Vec<u8> = vec![];
+        full_label.push(splitted[0].len() as u8);
+        for b in splitted[0].as_bytes() {
+            full_label.push(b.clone());
+        }
+        full_label.push(splitted[1].len() as u8);
+        for b in splitted[1].as_bytes() {
+            full_label.push(b.clone());
+        }
+        full_label.push(0x00);
+        return Label {
+            encoded_label: full_label,
+        };
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 struct DnsHeader {
     /// Packet Identifier (ID)	16 bits	A random ID assigned to query packets. Response packets must reply with the same ID.
@@ -81,19 +105,48 @@ impl DnsQuestion {
         return question;
     }
 
-    fn add_label(&mut self, label: String) {
-        let splitted: Vec<&str> = label.split(".").collect();
-        let mut full_label: Vec<u8> = vec![];
-        full_label.push(splitted[0].len() as u8);
-        for b in splitted[0].as_bytes() {
-            full_label.push(b.clone());
-        }
-        full_label.push(splitted[1].len() as u8);
-        for b in splitted[1].as_bytes() {
-            full_label.push(b.clone());
-        }
-        full_label.push(0x00);
-        self.name = full_label;
+    fn add_label(&mut self, label: &Label) {
+        self.name = label.encoded_label.clone();
+    }
+}
+
+#[derive(Debug)]
+struct DnsAnswer {
+    ///Name	Label Sequence	The domain name encoded as a sequence of labels.
+    name: Vec<u8>,
+    ///Type	2-byte Integer	1 for an A record, 5 for a CNAME record etc., full list here
+    answer_type: u16,
+    ///Class	2-byte Integer	Usually set to 1 (full list here)
+    class: u16,
+    ///TTL (Time-To-Live)	4-byte Integer	The duration in seconds a record can be cached before requerying.
+    ttl: u32,
+    ///Length (RDLENGTH)	2-byte Integer	Length of the RDATA field in bytes.
+    length: u16,
+    ///Data (RDATA)	Variable	Data specific to the record type.
+    data: Vec<u8>,
+}
+
+impl DnsAnswer {
+    fn get_answer(self) -> Vec<u8> {
+        let mut final_answer = vec![];
+        final_answer.extend(self.name);
+
+        final_answer.push(self.answer_type.to_be_bytes()[0]);
+        final_answer.push(self.answer_type.to_be_bytes()[1]);
+
+        final_answer.push(self.class.to_be_bytes()[0]);
+        final_answer.push(self.class.to_be_bytes()[1]);
+
+        final_answer.push(self.ttl.to_be_bytes()[0]);
+        final_answer.push(self.ttl.to_be_bytes()[1]);
+        final_answer.push(self.ttl.to_be_bytes()[2]);
+        final_answer.push(self.ttl.to_be_bytes()[3]);
+
+        final_answer.push(self.length.to_be_bytes()[0]);
+        final_answer.push(self.length.to_be_bytes()[1]);
+
+        final_answer.extend(self.data);
+        return final_answer;
     }
 }
 
@@ -104,6 +157,7 @@ fn main() {
     // Uncomment this block to pass the first stage
     let udp_socket = UdpSocket::bind("127.0.0.1:2053").expect("Failed to bind to address");
     let mut buf = [0; 512];
+    let label = Label::new(String::from("codecrafters.io"));
     loop {
         match udp_socket.recv_from(&mut buf) {
             Ok((size, source)) => {
@@ -120,7 +174,7 @@ fn main() {
                     z: 0,
                     rcode: 0,
                     qdcount: 1,
-                    ancount: 0,
+                    ancount: 1,
                     nscount: 0,
                     arcount: 0,
                 };
@@ -132,8 +186,18 @@ fn main() {
                     record_type: 1,
                     class: 1,
                 };
-                question.add_label(String::from("codecrafters.io"));
+                question.add_label(&label);
                 packet.extend(question.get_question());
+
+                let answer = DnsAnswer {
+                    name: label.encoded_label.clone(),
+                    answer_type: 1,
+                    class: 1,
+                    ttl: 60,
+                    length: 4,
+                    data: "8.8.8.8".as_bytes().to_vec(),
+                };
+                packet.extend(answer.get_answer());
 
                 udp_socket
                     .send_to(packet.as_slice(), source)
