@@ -109,7 +109,25 @@ fn main() {
             Ok((size, source)) => {
                 let _received_data = String::from_utf8_lossy(&buf[0..size]);
                 println!("Received {} bytes from {}", size, source);
-                let response = DnsHeader {
+                let stage1 = DnsHeader {
+                    id: 1234,
+                    qr: 0,
+                    opcode: 0,
+                    aa: 0,
+                    tc: 0,
+                    rd: 0,
+                    ra: 0,
+                    z: 0,
+                    rcode: 0,
+                    qdcount: 0,
+                    ancount: 0,
+                    nscount: 0,
+                    arcount: 0,
+                };
+                udp_socket
+                    .send_to(&stage1.get_header(), source)
+                    .expect("failed to send response");
+                let stage2 = DnsHeader {
                     id: 1234,
                     qr: 0,
                     opcode: 0,
@@ -131,11 +149,11 @@ fn main() {
                 };
                 question.add_label(String::from("codecrafters.io"));
                 let mut packet: Vec<u8> = vec![];
-                packet.extend_from_slice(&response.get_header());
+                packet.extend_from_slice(&stage2.get_header());
                 packet.extend(question.get_question());
                 udp_socket
                     .send_to(packet.as_slice(), source)
-                    .expect("Failed to send response");
+                    .expect("failed to send response");
             }
             Err(e) => {
                 eprintln!("Error receiving data: {}", e);
