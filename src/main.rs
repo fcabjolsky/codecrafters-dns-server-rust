@@ -111,7 +111,7 @@ fn main() {
                 println!("Received {} bytes from {}", size, source);
                 let stage1 = DnsHeader {
                     id: 1234,
-                    qr: 0,
+                    qr: 1,
                     opcode: 0,
                     aa: 0,
                     tc: 0,
