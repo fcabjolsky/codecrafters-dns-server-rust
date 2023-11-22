@@ -48,6 +48,7 @@ impl DnsHeader {
         let id = ((data[0] as u16) << 8) | (data[1] as u16);
         let op_code = (data[2] >> 3) & OP_CODE_MASK;
         let recursion_desired = data[2] & RECURSION_DESIRED_MASK;
+        let question_count = (data[4] as u16) << 8 | (data[5] as u16);
         DnsHeader {
             id,
             qr: 1,
@@ -58,8 +59,8 @@ impl DnsHeader {
             recursion_available: 0,
             reserved: 0,
             response_code: if op_code == 0 { 0 } else { 4 },
-            question_count: 1,
-            answer_count: 1,
+            question_count,
+            answer_count: question_count,
             authority_code: 0,
             additional_count: 0,
         }
@@ -173,7 +174,7 @@ impl DnsAnswer {
             class: 1,
             ttl: 60,
             length: 4,
-            data: "8.8.8.8".as_bytes().to_vec(),
+            data: [8, 8, 8, 8].to_vec(),
         }
     }
 }
@@ -181,40 +182,64 @@ impl DnsAnswer {
 #[derive(Debug)]
 pub struct Message {
     pub header: DnsHeader,
-    pub question: DnsQuestion,
-    pub answer: DnsAnswer,
+    pub questions: Vec<DnsQuestion>,
+    pub answers: Vec<DnsAnswer>,
 }
 
 impl Message {
     pub fn new(data: &[u8]) -> Message {
         let header = DnsHeader::new(data);
-        let label = Message::extract_label(&data[12..]);
-        let question = DnsQuestion::new(label.clone());
-        let answer = DnsAnswer::new(label.clone());
+        let mut questions = vec![];
+        let mut answers = vec![];
+        let mut start = 12;
+        for _ in 0..header.question_count {
+            let (label, end) = Message::extract_label(&data, start);
+            let question = DnsQuestion::new(label.clone());
+            questions.push(question);
+
+            let answer = DnsAnswer::new(label.clone());
+            answers.push(answer);
+            start = end + 5;
+        }
         return Message {
             header,
-            question,
-            answer,
+            questions,
+            answers,
         };
     }
 
-    pub fn extract_label(data: &[u8]) -> Vec<u8> {
+    pub fn extract_label(data: &[u8], start: usize) -> (Vec<u8>, usize) {
+        const POINTER_IDENTIFIER_MASK: u8 = 0xC0;
+        const POINTER_MASK: u16 = 0x3FFF;
+        
         let mut label = vec![];
-        for b in data {
-            label.push(*b);
-            if *b == 0 {
-                break;
+        for i in start..data.len() {
+            let b = data[i];
+            if b & POINTER_IDENTIFIER_MASK == POINTER_IDENTIFIER_MASK {
+                let mut pointer = (b as u16) << 8 | data[i+1] as u16;
+                pointer &= POINTER_MASK; 
+                let (pointed_label, _)= Message::extract_label(data, pointer as usize);
+                label.extend(pointed_label);
+                return (label, i);
+            }
+            label.push(b);
+            if b == 0 {
+                return (label, i);
             }
         }
-        return label;
+        return (label, start); //should never happen
     }
 
     pub fn get_packet(self) -> Vec<u8> {
         let mut packet: Vec<u8> = vec![];
         packet.extend_from_slice(&self.header.get_header());
-        packet.extend(self.question.get_question());
+        for question in self.questions {
+            packet.extend(question.get_question());
+        }
 
-        packet.extend(self.answer.get_answer());
+        for answer in self.answers {
+            packet.extend(answer.get_answer());
+        }
         return packet;
     }
 }
