@@ -1,27 +1,3 @@
-#[derive(Debug, Clone)]
-pub struct Label {
-    encoded_label: Vec<u8>,
-}
-
-impl Label {
-    pub fn new(name: String) -> Self {
-        let splitted: Vec<&str> = name.split(".").collect();
-        let mut full_label: Vec<u8> = vec![];
-        full_label.push(splitted[0].len() as u8);
-        for b in splitted[0].as_bytes() {
-            full_label.push(b.clone());
-        }
-        full_label.push(splitted[1].len() as u8);
-        for b in splitted[1].as_bytes() {
-            full_label.push(b.clone());
-        }
-        full_label.push(0x00);
-        return Label {
-            encoded_label: full_label,
-        };
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 pub struct DnsHeader {
     ///Packet Identifier (ID)
@@ -67,9 +43,11 @@ pub struct DnsHeader {
 
 impl DnsHeader {
     fn new(data: &[u8]) -> DnsHeader {
+        const OP_CODE_MASK: u8 = 0x0F;
+        const RECURSION_DESIRED_MASK: u8 = 0x01;
         let id = ((data[0] as u16) << 8) | (data[1] as u16);
-        let op_code = (data[2] >> 3) & 0x0F;
-        let recursion_desired = data[2] & 0x01;
+        let op_code = (data[2] >> 3) & OP_CODE_MASK;
+        let recursion_desired = data[2] & RECURSION_DESIRED_MASK;
         DnsHeader {
             id,
             qr: 1,
@@ -140,19 +118,12 @@ impl DnsQuestion {
         return question;
     }
 
-    pub fn add_label(&mut self, label: &Label) {
-        self.name = label.encoded_label.clone();
-    }
-
-    fn new() -> DnsQuestion {
-        let mut question = DnsQuestion {
-            name: vec![],
+    fn new(label: Vec<u8>) -> DnsQuestion {
+        return DnsQuestion {
+            name: label,
             record_type: 1,
             class: 1,
         };
-        let label = Label::new(String::from("codecrafters.io"));
-        question.add_label(&label);
-        question
     }
 }
 
@@ -195,10 +166,9 @@ impl DnsAnswer {
         return final_answer;
     }
 
-    fn new() -> DnsAnswer {
-        let label = Label::new(String::from("codecrafters.io"));
+    fn new(label: Vec<u8>) -> DnsAnswer {
         DnsAnswer {
-            name: label.encoded_label.clone(),
+            name: label,
             answer_type: 1,
             class: 1,
             ttl: 60,
@@ -218,13 +188,25 @@ pub struct Message {
 impl Message {
     pub fn new(data: &[u8]) -> Message {
         let header = DnsHeader::new(data);
-        let question = DnsQuestion::new();
-        let answer = DnsAnswer::new();
+        let label = Message::extract_label(&data[12..]);
+        let question = DnsQuestion::new(label.clone());
+        let answer = DnsAnswer::new(label.clone());
         return Message {
             header,
             question,
             answer,
         };
+    }
+
+    pub fn extract_label(data: &[u8]) -> Vec<u8> {
+        let mut label = vec![];
+        for b in data {
+            label.push(*b);
+            if *b == 0 {
+                break;
+            }
+        }
+        return label;
     }
 
     pub fn get_packet(self) -> Vec<u8> {
