@@ -67,16 +67,19 @@ pub struct DnsHeader {
 
 impl DnsHeader {
     fn new(data: &[u8]) -> DnsHeader {
+        let id = ((data[0] as u16) << 8) | (data[1] as u16);
+        let op_code = (data[2] >> 3) & 0x0F;
+        let recursion_desired = data[2] & 0x01;
         DnsHeader {
-            id: 1234,
+            id,
             qr: 1,
-            op_code: 0,
+            op_code,
             authorative_answer: 0,
             truncation: 0,
-            recursion_desired: 0,
+            recursion_desired,
             recursion_available: 0,
             reserved: 0,
-            response_code: 0,
+            response_code: if op_code == 0 { 0 } else { 4 },
             question_count: 1,
             answer_count: 1,
             authority_code: 0,
