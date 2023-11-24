@@ -1,3 +1,4 @@
+const HEADER_SIZE: usize = 12;
 #[derive(Debug, Copy, Clone)]
 pub struct DnsHeader {
     ///Packet Identifier (ID)
@@ -5,6 +6,7 @@ pub struct DnsHeader {
     id: u16,
     ///Query/Response Indicator (QR)
     ///1 bit	1 for a reply packet, 0 for a question packet.
+    qr: u8,
     ///Operation Code (OPCODE)
     ///4 bits	Specifies the kind of query in a message.
     op_code: u8,
@@ -49,6 +51,7 @@ impl DnsHeader {
         let question_count = (data[4] as u16) << 8 | (data[5] as u16);
         DnsHeader {
             id: DnsHeader::parse_id(data),
+            qr: 1,
             op_code,
             authorative_answer: 0,
             truncation: 0,
@@ -65,7 +68,9 @@ impl DnsHeader {
 
     pub fn get_header(self, is_question: bool) -> [u8; 12] {
         let mut header = [0; 12];
-        let qr = if is_question { 0 } else { 1 };
+        let qr = if is_question { 0 } else { self.qr };
+        let question_count = if is_question { 1 } else { self.question_count };
+        let answer_count = if is_question { 1 } else { self.answer_count };
 
         header[0] = self.id.to_be_bytes()[0];
         header[1] = self.id.to_be_bytes()[1];
@@ -78,11 +83,11 @@ impl DnsHeader {
 
         header[3] = (self.recursion_available << 7) | (self.reserved << 4) | self.response_code;
 
-        header[4] = self.question_count.to_be_bytes()[0];
-        header[5] = self.question_count.to_be_bytes()[1];
+        header[4] = question_count.to_be_bytes()[0];
+        header[5] = question_count.to_be_bytes()[1];
 
-        header[6] = self.answer_count.to_be_bytes()[0];
-        header[7] = self.answer_count.to_be_bytes()[1];
+        header[6] = answer_count.to_be_bytes()[0];
+        header[7] = answer_count.to_be_bytes()[1];
 
         header[8] = self.authority_code.to_be_bytes()[0];
         header[9] = self.authority_code.to_be_bytes()[1];
@@ -105,6 +110,8 @@ pub struct DnsQuestion {
     record_type: u16,
     ///Class: 2-byte int; usually set to 1 (full list here)
     class: u16,
+    ///Size: the ammount of bytes that the question takes in an individual the DNS message
+    size: usize,
 }
 
 impl DnsQuestion {
@@ -121,10 +128,12 @@ impl DnsQuestion {
     }
 
     fn new(label: Vec<u8>) -> DnsQuestion {
+        let size = label.len() + 4;
         return DnsQuestion {
             name: label,
             record_type: 1,
             class: 1,
+            size,
         };
     }
 }
@@ -168,14 +177,33 @@ impl DnsAnswer {
         return final_answer;
     }
 
-    fn new(label: Vec<u8>) -> DnsAnswer {
+    fn new(data: &[u8]) -> DnsAnswer {
+        let (label, label_end) = Message::extract_label(data, 0);
+        let answer_type = (data[label_end + 1] as u16) << 8 | (data[label_end + 2] as u16);
+        let class = (data[label_end + 3] as u16) << 8 | (data[label_end + 4] as u16);
+        let ttl = (data[label_end + 5] as u32) << 24
+            | (data[label_end + 6] as u32) << 16
+            | (data[label_end + 7] as u32) << 8
+            | (data[label_end + 8] as u32);
+        let length = (data[label_end + 9] as u16) << 8 | (data[label_end + 10] as u16);
         DnsAnswer {
             name: label,
+            answer_type,
+            class,
+            ttl,
+            length,
+            data: data[label_end + 11..].to_vec(),
+        }
+    }
+
+    fn default() -> DnsAnswer {
+        DnsAnswer {
+            name: vec![0],
             answer_type: 1,
             class: 1,
             ttl: 60,
             length: 4,
-            data: [8, 8, 8, 8].to_vec(),
+            data: vec![8, 8, 8, 8],
         }
     }
 }
@@ -184,32 +212,26 @@ impl DnsAnswer {
 pub struct Message {
     pub header: DnsHeader,
     pub questions: Vec<DnsQuestion>,
-    pub answers: Vec<Vec<u8>>,
+    pub answers: Vec<DnsAnswer>,
     pub source: String,
-    answer_begin: usize,
 }
 
 impl Message {
     pub fn new(data: &[u8], source: String) -> Message {
         let header = DnsHeader::new(data);
         let mut questions = vec![];
-        let mut answers = vec![];
-        let mut start = 12;
+        let mut start = HEADER_SIZE;
         for _ in 0..header.question_count {
             let (label, end) = Message::extract_label(&data, start);
             let question = DnsQuestion::new(label.clone());
             questions.push(question);
-
-            let answer = DnsAnswer::new(label.clone());
-            answers.push(answer.get_answer());
             start = end + 5;
         }
         return Message {
             header,
             questions,
-            answers,
+            answers: vec![],
             source,
-            answer_begin: start,
         };
     }
 
@@ -243,7 +265,7 @@ impl Message {
         }
 
         for answer in &self.answers {
-            packet.extend(answer);
+            packet.extend(answer.get_answer());
         }
         return packet;
     }
@@ -260,11 +282,17 @@ impl Message {
     }
 
     pub fn parse_answer(&mut self, data: &[u8]) {
-        if self.answer_begin > data.len() {
+        if data.len() <= HEADER_SIZE {
+            self.answers.push(DnsAnswer::default());
             return;
         }
-        self.answers = vec![];
-        self.answers.push(data[self.answer_begin..].to_vec());
+        let current_question = self
+            .questions
+            .get(self.answers.len())
+            .expect("Question out of index");
+        let answer_offset = HEADER_SIZE + current_question.size;
+        let answer = DnsAnswer::new(&data[answer_offset..]);
+        self.answers.push(answer);
     }
 
     pub fn is_ready(&self) -> bool {
@@ -275,4 +303,3 @@ impl Message {
         return self.header.id;
     }
 }
-

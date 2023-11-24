@@ -35,13 +35,14 @@ fn main() {
                     messages.insert(message.get_id(), message);
                 } else {
                     let id = DnsHeader::parse_id(&buf);
-                    let mut message = messages.remove(&id).expect("Message not found");
+                    let message = messages.get_mut(&id).expect("Message not found");
                     message.parse_answer(&buf[0..size]);
                     if message.is_ready() {
                         let packet = message.get_final_packet();
                         udp_socket
                             .send_to(packet.as_slice(), &message.source)
                             .expect("failed to send response");
+                        messages.remove(&id);
                     }
                 }
             }
